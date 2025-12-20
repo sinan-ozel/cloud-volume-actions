@@ -1,0 +1,113 @@
+name: 'Snapshot and Destroy Cloud Volume'
+description: 'Creates snapshots of volumes and then destroys them'
+author: 'Sinan Ozel'
+
+branding:
+  icon: 'archive'
+  color: 'red'
+
+inputs:
+  provider:
+    description: 'Cloud provider (aws or exoscale)'
+    required: true
+
+  volume-name:
+    description: 'Name/label for the volume'
+    required: true
+
+  # AWS inputs
+  aws-region:
+    description: 'AWS region'
+    required: false
+
+  aws-access-key-id:
+    description: 'AWS access key ID'
+    required: false
+
+  aws-secret-access-key:
+    description: 'AWS secret access key'
+    required: false
+
+  # Exoscale inputs
+  exoscale-zone:
+    description: 'Exoscale zone'
+    required: false
+
+  exoscale-api-key:
+    description: 'Exoscale API key'
+    required: false
+
+  exoscale-api-secret:
+    description: 'Exoscale API secret'
+    required: false
+
+outputs:
+  snapshot-id:
+    description: 'ID of the created snapshot (AWS, single volume)'
+    value: ${{ steps.teardown.outputs.snapshot-id }}
+
+  snapshot-ids:
+    description: 'Comma-separated IDs of created snapshots'
+    value: ${{ steps.teardown.outputs.snapshot-ids }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate provider
+      shell: bash
+      run: |
+        if [[ "${{ inputs.provider }}" != "aws" && "${{ inputs.provider }}" != "exoscale" ]]; then
+          echo "❌ Error: provider must be 'aws' or 'exoscale'"
+          exit 1
+        fi
+
+        if [[ "${{ inputs.provider }}" == "aws" ]]; then
+          if [[ -z "${{ inputs.aws-access-key-id }}" ]] || [[ -z "${{ inputs.aws-secret-access-key }}" ]]; then
+            echo "❌ Error: AWS credentials required when provider=aws"
+            exit 1
+          fi
+        fi
+
+        if [[ "${{ inputs.provider }}" == "exoscale" ]]; then
+          if [[ -z "${{ inputs.exoscale-api-key }}" ]] || [[ -z "${{ inputs.exoscale-api-secret }}" ]]; then
+            echo "❌ Error: Exoscale credentials required when provider=exoscale"
+            exit 1
+          fi
+        fi
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        pip install -r ${{ github.action_path }}/requirements/${{ inputs.provider }}
+
+    - name: Snapshot and destroy volume
+      id: teardown
+      shell: bash
+      env:
+        VOLUME_NAME: ${{ inputs.volume-name }}
+        VOLUME_SIZE: '0'  # Not needed for teardown but required by env
+        AWS_REGION: ${{ inputs.aws-region }}
+        AWS_ACCESS_KEY_ID: ${{ inputs.aws-access-key-id }}
+        AWS_SECRET_ACCESS_KEY: ${{ inputs.aws-secret-access-key }}
+        EXOSCALE_ZONE: ${{ inputs.exoscale-zone }}
+        EXOSCALE_API_KEY: ${{ inputs.exoscale-api-key }}
+        EXOSCALE_API_SECRET: ${{ inputs.exoscale-api-secret }}
+        PYTHONPATH: ${{ github.action_path }}
+      run: |
+        python ${{ github.action_path }}/scripts/${{ inputs.provider }}/teardown.py
+
+        if [[ -f snapshot-output.txt ]]; then
+          if [[ "${{ inputs.provider }}" == "aws" ]]; then
+            SNAPSHOT_ID=$(cat snapshot-output.txt)
+            echo "snapshot-id=$SNAPSHOT_ID" >> $GITHUB_OUTPUT
+            echo "snapshot-ids=$SNAPSHOT_ID" >> $GITHUB_OUTPUT
+          else
+            SNAPSHOT_IDS=$(cat snapshot-output.txt)
+            echo "snapshot-ids=$SNAPSHOT_IDS" >> $GITHUB_OUTPUT
+          fi
+        fi

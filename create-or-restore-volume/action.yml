@@ -1,0 +1,127 @@
+name: 'Create or Restore Cloud Volume'
+description: 'Creates a new volume or restores from the most recent snapshot'
+author: 'Sinan Ozel'
+
+branding:
+  icon: 'database'
+  color: 'blue'
+
+inputs:
+  provider:
+    description: 'Cloud provider (aws or exoscale)'
+    required: true
+
+  volume-name:
+    description: 'Name/label for the volume'
+    required: true
+
+  volume-size:
+    description: 'Size in GB'
+    required: true
+
+  # AWS inputs
+  aws-region:
+    description: 'AWS region'
+    required: false
+    default: 'ca-central-1'
+
+  aws-access-key-id:
+    description: 'AWS access key ID'
+    required: false
+
+  aws-secret-access-key:
+    description: 'AWS secret access key'
+    required: false
+
+  # Exoscale inputs
+  exoscale-zone:
+    description: 'Exoscale zone'
+    required: false
+    default: 'ch-gva-2'
+
+  exoscale-api-key:
+    description: 'Exoscale API key'
+    required: false
+
+  exoscale-api-secret:
+    description: 'Exoscale API secret'
+    required: false
+
+outputs:
+  volume-id:
+    description: 'ID of the created or existing volume'
+    value: ${{ steps.provision.outputs.volume-id }}
+
+  availability-zone:
+    description: 'AWS availability zone (AWS only)'
+    value: ${{ steps.provision.outputs.availability-zone }}
+
+  zone:
+    description: 'Exoscale zone (Exoscale only)'
+    value: ${{ steps.provision.outputs.zone }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate provider
+      shell: bash
+      run: |
+        if [[ "${{ inputs.provider }}" != "aws" && "${{ inputs.provider }}" != "exoscale" ]]; then
+          echo "❌ Error: provider must be 'aws' or 'exoscale'"
+          exit 1
+        fi
+
+        if [[ "${{ inputs.provider }}" == "aws" ]]; then
+          if [[ -z "${{ inputs.aws-access-key-id }}" ]] || [[ -z "${{ inputs.aws-secret-access-key }}" ]]; then
+            echo "❌ Error: AWS credentials required when provider=aws"
+            exit 1
+          fi
+        fi
+
+        if [[ "${{ inputs.provider }}" == "exoscale" ]]; then
+          if [[ -z "${{ inputs.exoscale-api-key }}" ]] || [[ -z "${{ inputs.exoscale-api-secret }}" ]]; then
+            echo "❌ Error: Exoscale credentials required when provider=exoscale"
+            exit 1
+          fi
+        fi
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        pip install -r ${{ github.action_path }}/requirements/${{ inputs.provider }}
+
+    - name: Provision volume
+      id: provision
+      shell: bash
+      env:
+        VOLUME_NAME: ${{ inputs.volume-name }}
+        VOLUME_SIZE: ${{ inputs.volume-size }}
+        AWS_REGION: ${{ inputs.aws-region }}
+        AWS_ACCESS_KEY_ID: ${{ inputs.aws-access-key-id }}
+        AWS_SECRET_ACCESS_KEY: ${{ inputs.aws-secret-access-key }}
+        EXOSCALE_ZONE: ${{ inputs.exoscale-zone }}
+        EXOSCALE_API_KEY: ${{ inputs.exoscale-api-key }}
+        EXOSCALE_API_SECRET: ${{ inputs.exoscale-api-secret }}
+        PYTHONPATH: ${{ github.action_path }}
+      run: |
+        python ${{ github.action_path }}/scripts/${{ inputs.provider }}/provision.py
+
+        # Parse outputs
+        if [[ "${{ inputs.provider }}" == "aws" ]]; then
+          VOLUME_ID=$(cat volume-aws-${{ inputs.volume-name }}.json | python -c "import json, sys; print(json.load(sys.stdin)['volume_id'])")
+          echo "volume-id=$VOLUME_ID" >> $GITHUB_OUTPUT
+
+          # Get availability zone
+          AZ=$(python -c "import boto3, os; ec2 = boto3.client('ec2', region_name='${{ inputs.aws-region }}'); print(ec2.describe_volumes(VolumeIds=['$VOLUME_ID'])['Volumes'][0]['AvailabilityZone'])")
+          echo "availability-zone=$AZ" >> $GITHUB_OUTPUT
+        else
+          VOLUME_ID=$(cat volume-exoscale-${{ inputs.volume-name }}.json | python -c "import json, sys; print(json.load(sys.stdin)['volume_id'])")
+          ZONE=$(cat volume-exoscale-${{ inputs.volume-name }}.json | python -c "import json, sys; print(json.load(sys.stdin)['zone'])")
+          echo "volume-id=$VOLUME_ID" >> $GITHUB_OUTPUT
+          echo "zone=$ZONE" >> $GITHUB_OUTPUT
+        fi

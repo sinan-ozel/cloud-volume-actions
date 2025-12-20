@@ -1,0 +1,24 @@
+[project]
+name = "cloud-volume-actions"
+version = "0.1.0"
+description = "GitHub Actions for managing persistent cloud volumes"
+
+[project.optional-dependencies]
+dev = [
+    "isort>=5.12.0",          # For import sorting
+    "ruff>=0.12.11",          # For linting
+    "black>=24.0.0",          # For code formatting (Black)
+    "docformatter>=1.7.5",    # For formatting docstrings
+]
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
+
+[tool.isort]
+profile = "black"
+line_length = 88
+
+[tool.docformatter]
+wrap-summaries = 72
+wrap-descriptions = 72
