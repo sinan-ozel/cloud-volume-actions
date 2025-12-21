@@ -1,0 +1,368 @@
+name: Publish Actions
+
+on:
+  push:
+    branches:
+      - '*'
+    paths:
+      - 'pyproject.toml'
+      - 'create-or-restore-volume/**'
+      - 'snapshot-and-destroy-volume/**'
+      - '.github/workflows/publish.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'pyproject.toml'
+      - 'create-or-restore-volume/**'
+      - 'snapshot-and-destroy-volume/**'
+      - '.github/workflows/publish.yml'
+
+jobs:
+  reformat:
+    name: Reformat Code
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.head_ref || github.ref }}
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Make reformat script executable
+        run: chmod +x reformat/reformat.sh
+
+      - name: Run reformat script
+        run: ./reformat/reformat.sh
+
+      - name: Commit changes
+        if: github.ref != 'refs/heads/main'
+        run: |
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "github-actions"
+          git add .
+          git commit -m "Auto reformat code via workflow" || echo "No changes to commit"
+
+      - name: Push changes
+        if: github.ref != 'refs/heads/main'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            git push origin HEAD:refs/heads/${{ github.head_ref }}
+          else
+            git push origin HEAD:${{ github.ref }}
+          fi
+
+  detect-version-change:
+    runs-on: ubuntu-latest
+    outputs:
+      version-changed: ${{ steps.check.outputs.changed }}
+      new-version: ${{ steps.check.outputs.version }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Check if version changed
+        id: check
+        run: |
+          CURRENT_VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+
+          # Check if pyproject.toml was modified in this push
+          if git diff HEAD~1 HEAD --name-only | grep -q "pyproject.toml"; then
+            # Check if the version line specifically changed
+            if git diff HEAD~1 HEAD pyproject.toml | grep -q '^[+-]version'; then
+              echo "changed=true" >> $GITHUB_OUTPUT
+              echo "✅ Version changed to: $CURRENT_VERSION"
+            else
+              echo "changed=false" >> $GITHUB_OUTPUT
+              echo "ℹ️  Version unchanged: $CURRENT_VERSION"
+            fi
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+            echo "ℹ️  Version unchanged: $CURRENT_VERSION"
+          fi
+
+  test-actions:
+    runs-on: ubuntu-latest
+    needs: detect-version-change
+    if: needs.detect-version-change.outputs.version-changed == 'true'
+
+    strategy:
+      matrix:
+        provider: [aws, exoscale]
+        action: [create-or-restore-volume, snapshot-and-destroy-volume]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Validate action.yml syntax
+        run: |
+          if ! grep -q "^name:" ${{ matrix.action }}/action.yml; then
+            echo "❌ Invalid action.yml in ${{ matrix.action }}"
+            exit 1
+          fi
+          echo "✅ action.yml is valid"
+
+      - name: Check for required inputs
+        run: |
+          if ! grep -q "provider:" ${{ matrix.action }}/action.yml; then
+            echo "❌ Missing provider input in ${{ matrix.action }}"
+            exit 1
+          fi
+          echo "✅ Required inputs present"
+
+  integration-test:
+    name: Integration Tests
+    runs-on: ubuntu-latest
+    needs: [detect-version-change, test-actions]
+    if: needs.detect-version-change.outputs.version-changed == 'true'
+
+    strategy:
+      matrix:
+        provider: [aws, exoscale]
+      fail-fast: false
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set test volume name
+        id: volume
+        run: |
+          TEST_NAME="gha-test-${{ matrix.provider }}-${{ github.run_id }}"
+          echo "name=$TEST_NAME" >> $GITHUB_OUTPUT
+
+      # Test 1: Create new volume
+      - name: Test - Create new volume
+        id: create
+        uses: ./create-or-restore-volume
+        with:
+          provider: ${{ matrix.provider }}
+          volume-name: ${{ steps.volume.outputs.name }}
+          volume-size: '10'
+          aws-region: ${{ secrets.TEST_AWS_REGION }}
+          aws-access-key-id: ${{ secrets.TEST_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.TEST_AWS_SECRET_ACCESS_KEY }}
+          exoscale-zone: ${{ secrets.TEST_EXOSCALE_ZONE }}
+          exoscale-api-key: ${{ secrets.TEST_EXOSCALE_API_KEY }}
+          exoscale-api-secret: ${{ secrets.TEST_EXOSCALE_API_SECRET }}
+
+      - name: Verify volume created
+        run: |
+          echo "Volume ID: ${{ steps.create.outputs.volume-id }}"
+          if [ -z "${{ steps.create.outputs.volume-id }}" ]; then
+            echo "❌ Volume ID is empty"
+            exit 1
+          fi
+          echo "✅ Volume created successfully"
+
+      # Test 2: Snapshot and destroy
+      - name: Test - Snapshot and destroy volume
+        id: snapshot
+        uses: ./snapshot-and-destroy-volume
+        with:
+          provider: ${{ matrix.provider }}
+          volume-name: ${{ steps.volume.outputs.name }}
+          aws-region: ${{ secrets.TEST_AWS_REGION }}
+          aws-access-key-id: ${{ secrets.TEST_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.TEST_AWS_SECRET_ACCESS_KEY }}
+          exoscale-zone: ${{ secrets.TEST_EXOSCALE_ZONE }}
+          exoscale-api-key: ${{ secrets.TEST_EXOSCALE_API_KEY }}
+          exoscale-api-secret: ${{ secrets.TEST_EXOSCALE_API_SECRET }}
+
+      - name: Verify snapshot created
+        run: |
+          echo "Snapshot ID(s): ${{ steps.snapshot.outputs.snapshot-ids }}"
+          if [ -z "${{ steps.snapshot.outputs.snapshot-ids }}" ]; then
+            echo "❌ Snapshot ID is empty"
+            exit 1
+          fi
+          echo "✅ Snapshot created and volume destroyed"
+
+      # Test 3: Restore from snapshot
+      - name: Test - Restore from snapshot
+        id: restore
+        uses: ./create-or-restore-volume
+        with:
+          provider: ${{ matrix.provider }}
+          volume-name: ${{ steps.volume.outputs.name }}
+          volume-size: '10'
+          aws-region: ${{ secrets.TEST_AWS_REGION }}
+          aws-access-key-id: ${{ secrets.TEST_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.TEST_AWS_SECRET_ACCESS_KEY }}
+          exoscale-zone: ${{ secrets.TEST_EXOSCALE_ZONE }}
+          exoscale-api-key: ${{ secrets.TEST_EXOSCALE_API_KEY }}
+          exoscale-api-secret: ${{ secrets.TEST_EXOSCALE_API_SECRET }}
+
+      - name: Verify volume restored
+        run: |
+          echo "Restored Volume ID: ${{ steps.restore.outputs.volume-id }}"
+          if [ -z "${{ steps.restore.outputs.volume-id }}" ]; then
+            echo "❌ Restored volume ID is empty"
+            exit 1
+          fi
+          echo "✅ Volume restored from snapshot"
+
+      # Cleanup: Always run
+      - name: Cleanup - Destroy test volume
+        if: always()
+        uses: ./snapshot-and-destroy-volume
+        continue-on-error: true
+        with:
+          provider: ${{ matrix.provider }}
+          volume-name: ${{ steps.volume.outputs.name }}
+          aws-region: ${{ secrets.TEST_AWS_REGION }}
+          aws-access-key-id: ${{ secrets.TEST_AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.TEST_AWS_SECRET_ACCESS_KEY }}
+          exoscale-zone: ${{ secrets.TEST_EXOSCALE_ZONE }}
+          exoscale-api-key: ${{ secrets.TEST_EXOSCALE_API_KEY }}
+          exoscale-api-secret: ${{ secrets.TEST_EXOSCALE_API_SECRET }}
+
+  publish-release:
+    runs-on: ubuntu-latest
+    needs: [detect-version-change, test-actions, integration-test]
+    if: false  # DISABLED: Set to true to enable publishing
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Get version
+        id: version
+        run: |
+          VERSION=$(grep '^version = ' pyproject.toml | sed 's/version = "\(.*\)"/\1/')
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=v$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Check if tag exists
+        id: check-tag
+        run: |
+          if git rev-parse "v${{ steps.version.outputs.version }}" >/dev/null 2>&1; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+            echo "⚠️  Tag v${{ steps.version.outputs.version }} already exists"
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "✅ Tag v${{ steps.version.outputs.version }} is new"
+          fi
+
+      - name: Create and push tag
+        if: steps.check-tag.outputs.exists == 'false'
+        run: |
+          git tag -a "v${{ steps.version.outputs.version }}" -m "Release v${{ steps.version.outputs.version }}"
+          git push origin "v${{ steps.version.outputs.version }}"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          VERSION="v${{ steps.version.outputs.version }}"
+
+          # Get commits since last tag
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+
+          if [ -z "$PREV_TAG" ]; then
+            COMMITS=$(git log --pretty=format:"- %s (%h)" --no-merges)
+          else
+            COMMITS=$(git log ${PREV_TAG}..HEAD --pretty=format:"- %s (%h)" --no-merges)
+          fi
+
+          cat > changelog.md << EOF
+          # Cloud Volume Actions $VERSION
+
+          ## Actions Included
+
+          - **create-or-restore-volume** - Creates a new volume or restores from the most recent snapshot
+          - **snapshot-and-destroy-volume** - Creates snapshots of volumes and then destroys them
+
+          ## Supported Providers
+
+          - AWS (EBS)
+          - Exoscale (Block Storage)
+
+          ## Changes
+
+          $COMMITS
+
+          ## Usage
+
+          \`\`\`yaml
+          - uses: your-org/cloud-volume-actions/create-or-restore-volume@$VERSION
+            with:
+              provider: aws
+              volume-name: my-volume
+              volume-size: '100'
+              aws-region: us-east-1
+              aws-access-key-id: \${{ secrets.AWS_ACCESS_KEY_ID }}
+              aws-secret-access-key: \${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          \`\`\`
+
+          See [README.md](README.md) for full documentation.
+          EOF
+
+      - name: Create GitHub Release
+        if: steps.check-tag.outputs.exists == 'false'
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: Release v${{ steps.version.outputs.version }}
+          body_path: changelog.md
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update major version tag
+        if: steps.check-tag.outputs.exists == 'false'
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          MAJOR_VERSION=$(echo $VERSION | cut -d. -f1)
+
+          # Force update major version tag (e.g., v0)
+          git tag -fa "v${MAJOR_VERSION}" -m "Update v${MAJOR_VERSION} to v${VERSION}"
+          git push origin "v${MAJOR_VERSION}" --force
+
+          echo "✅ Updated v${MAJOR_VERSION} tag to point to v${VERSION}"
+
+  publish-marketplace:
+    runs-on: ubuntu-latest
+    needs: [detect-version-change, publish-release]
+    if: needs.detect-version-change.outputs.version-changed == 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Publish to GitHub Marketplace
+        run: |
+          VERSION=$(cat version.txt)
+          echo "ℹ️  To publish to GitHub Marketplace:"
+          echo "   1. Go to https://github.com/${{ github.repository }}/releases/tag/v${VERSION}"
+          echo "   2. Click 'Edit release'"
+          echo "   3. Check 'Publish this Action to the GitHub Marketplace'"
+          echo "   4. Select primary category and click 'Update release'"
+          echo ""
+          echo "   The action will then be available at:"
+          echo "   - ${{ github.repository }}/create-or-restore-volume@v${VERSION}"
+          echo "   - ${{ github.repository }}/snapshot-and-destroy-volume@v${VERSION}"
