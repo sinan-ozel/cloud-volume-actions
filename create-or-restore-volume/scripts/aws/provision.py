@@ -107,6 +107,7 @@ def main():
         json.dump(
             {
                 "volume_id": volume_id,
+                "region": REGION,
             },
             f,
         )

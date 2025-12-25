@@ -125,3 +125,9 @@ runs:
           echo "volume-id=$VOLUME_ID" >> $GITHUB_OUTPUT
           echo "zone=$ZONE" >> $GITHUB_OUTPUT
         fi
+
+    - name: Upload volume artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: volume-${{ inputs.provider }}-${{ inputs.volume-name }}
+        path: volume-${{ inputs.provider }}-${{ inputs.volume-name }}.json
