@@ -21,7 +21,7 @@ Creates a new volume or restores from the most recent snapshot if available.
 
 ```yaml
 - name: Create or Restore Volume
-  uses: your-org/cloud-volume-actions/create-or-restore-volume@v0.1.0
+  uses: sinan-ozel/cloud-volume-actions/create-or-restore-volume@v0.1.0
   with:
     provider: 'aws'  # or 'exoscale'
     volume-name: 'my-data-volume'
@@ -57,7 +57,7 @@ Creates snapshots of volumes and then destroys them.
 
 ```yaml
 - name: Snapshot and Destroy Volume
-  uses: your-org/cloud-volume-actions/snapshot-and-destroy-volume@v0.1.0
+  uses: sinan-ozel/cloud-volume-actions/snapshot-and-destroy-volume@v0.1.0
   with:
     provider: 'aws'  # or 'exoscale'
     volume-name: 'my-data-volume'
