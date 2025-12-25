@@ -2,7 +2,22 @@
 
 GitHub Actions for managing persistent cloud volumes with automatic snapshot-based restore capabilities.
 
-**Supported Providers:** AWS (EBS), Exoscale (Block Storage)
+It restores a block storage if the snapshot exists, or a brand new one.
+When destroying, it snapshots it first.
+The purpose is to give data science and development teams temporary-but-persistent environments that are persistent.
+
+See the usage example here: https://github.com/sinan-ozel/iac/blob/main/.github/workflows/volume.yaml
+
+## ☁️ Supported Providers
+
+| Provider | Status |
+|----------|--------|
+| AWS (EBS) | ✅ Supported |
+| Exoscale (Block Storage) | ✅ Supported |
+| Google Cloud | 🔜 Planned |
+| Azure | 🔜 Planned |
+
+
 
 ## Actions
 
