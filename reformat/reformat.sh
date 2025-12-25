@@ -18,16 +18,6 @@ echo ""
 echo "=========================================="
 echo "Running docformatter (docstring formatter)..."
 echo "=========================================="
-# First check
-docformatter \
-  --check \
-  --recursive \
-  --wrap-summaries 72 \
-  --wrap-descriptions 72 \
-  create-or-restore-volume/ \
-  snapshot-and-destroy-volume/
-
-# Then apply changes
 docformatter \
   --in-place \
   --recursive \
