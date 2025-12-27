@@ -44,20 +44,55 @@ def main():
         )
         snapshot_id = operation["reference"]["id"]
         snapshot_ids.append(snapshot_id)
-        print(f"Created snapshot: {snapshot_id}")
+        print(f"Initiated snapshot creation: {snapshot_id}")
 
-    # Wait for all snapshots to complete
-    def check_snapshots_ready():
-        for snapshot_id in snapshot_ids:
-            snapshot = exo.get_block_storage_snapshot(id=snapshot_id)
-            state = snapshot.get("state", "").lower()
-            if state not in ["created", "error"]:
+        # Wait until this specific snapshot appears in the list
+        def check_snapshot_exists():
+            try:
+                snapshots_response = exo.list_block_storage_snapshots()
+                snapshots = snapshots_response.get("block-storage-snapshots", [])
+                for s in snapshots:
+                    if s.get("id") == snapshot_id:
+                        print(f"Snapshot {snapshot_id} found in list with state: {s.get('state')}")
+                        return True
                 return False
-        return True
+            except Exception as e:
+                print(f"Error checking snapshot: {e}")
+                return False
 
-    print("Waiting for snapshots to complete...")
+        print(f"Waiting for snapshot {snapshot_id} to appear in list...")
+        wait_until(check=check_snapshot_exists, kwargs={}, cond=lambda result: result)
+
+    # Wait for all snapshots to reach final state
+    def check_snapshots_ready():
+        all_ready = True
+        for snapshot_id in snapshot_ids:
+            try:
+                snapshot = exo.get_block_storage_snapshot(id=snapshot_id)
+                state = snapshot.get("state", "").lower()
+                print(f"Snapshot {snapshot_id} state: {state}")
+                if state not in ["created", "error"]:
+                    all_ready = False
+            except Exception as e:
+                print(f"Error getting snapshot {snapshot_id}: {e}")
+                all_ready = False
+        return all_ready
+
+    print("Waiting for all snapshots to complete...")
     wait_until(check=check_snapshots_ready, kwargs={}, cond=lambda result: result)
     print("All snapshots completed")
+
+    # Verify all snapshots exist before deletion
+    print("\nVerifying all snapshots before deletion:")
+    snapshots_response = exo.list_block_storage_snapshots()
+    all_snapshots = snapshots_response.get("block-storage-snapshots", [])
+    matching_snapshots = [s for s in all_snapshots if s.get("labels") == LABELS]
+    print(f"Found {len(matching_snapshots)} snapshots with matching labels:")
+    for s in matching_snapshots:
+        print(f"  - Snapshot ID: {s.get('id')}, State: {s.get('state')}, Name: {s.get('name')}")
+
+    if len(matching_snapshots) == 0:
+        raise RuntimeError("No snapshots found before deletion! Aborting volume deletion.")
 
     # Delete all matching volumes
     for volume_id in volume_ids:
@@ -73,6 +108,18 @@ def main():
 
     wait_until(check=check_volumes_deleted, kwargs={}, cond=lambda result: result)
     print("All volumes deleted successfully")
+
+    # Verify snapshots still exist after deletion
+    print("\nVerifying snapshots after volume deletion:")
+    snapshots_response = exo.list_block_storage_snapshots()
+    all_snapshots = snapshots_response.get("block-storage-snapshots", [])
+    matching_snapshots = [s for s in all_snapshots if s.get("labels") == LABELS]
+    print(f"Found {len(matching_snapshots)} snapshots after deletion:")
+    for s in matching_snapshots:
+        print(f"  - Snapshot ID: {s.get('id')}, State: {s.get('state')}, Name: {s.get('name')}")
+
+    if len(matching_snapshots) == 0:
+        raise RuntimeError("Snapshots disappeared after volume deletion!")
 
     # Write snapshot IDs to file for output
     with open("snapshot-output.txt", "w") as f:
