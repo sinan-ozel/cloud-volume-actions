@@ -24,7 +24,7 @@ docformatter \
   --wrap-summaries 72 \
   --wrap-descriptions 72 \
   create-or-restore-volume/ \
-  snapshot-and-destroy-volume/
+  snapshot-and-destroy-volume/ || true
 
 echo ""
 echo "=========================================="
