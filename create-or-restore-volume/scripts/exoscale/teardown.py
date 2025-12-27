@@ -42,8 +42,22 @@ def main():
         operation = exo.create_block_storage_snapshot(
             id=volume_id, name=snapshot_name, labels=LABELS
         )
-        snapshot_ids.append(operation["id"])
-        print(f"Created snapshot operation: {operation['id']}")
+        snapshot_id = operation["reference"]["id"]
+        snapshot_ids.append(snapshot_id)
+        print(f"Created snapshot: {snapshot_id}")
+
+    # Wait for all snapshots to complete
+    def check_snapshots_ready():
+        for snapshot_id in snapshot_ids:
+            snapshot = exo.get_block_storage_snapshot(id=snapshot_id)
+            state = snapshot.get("state", "").lower()
+            if state not in ["created", "error"]:
+                return False
+        return True
+
+    print("Waiting for snapshots to complete...")
+    wait_until(check=check_snapshots_ready, kwargs={}, cond=lambda result: result)
+    print("All snapshots completed")
 
     # Delete all matching volumes
     for volume_id in volume_ids:
