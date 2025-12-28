@@ -4,18 +4,22 @@ GitHub Actions for managing persistent cloud volumes with automatic snapshot-bas
 
 It restores a block storage if the snapshot exists, or a brand new one.
 When destroying, it snapshots it first.
-The purpose is to give data science and development teams temporary-but-persistent environments that are persistent.
+The purpose is to give data science and development teams _temporary-but-persistent_ environments.
 
 See the usage example here: https://github.com/sinan-ozel/iac/blob/main/.github/workflows/volume.yaml
 
 ## ☁️ Supported Providers
 
-| Provider | Status |
-|----------|--------|
-| AWS (EBS) | ✅ Supported |
-| Exoscale (Block Storage) | ✅ Supported |
-| Google Cloud | 🔜 Planned |
-| Azure | 🔜 Planned |
+| Provider | Create or Restore | Snapshot | Snapshot and Destroy |
+|----------|-------------------|----------|----------------------|
+| AWS (EBS) | ✅ | N/A | ✅ |
+| Exoscale (Block Storage) | ✅ | ✅ | ❌ Not allowed* |
+| Oracle Cloud | 🔜 Planned | 🔜 Planned | 🔜 Planned |
+| Google Cloud | 🤔 Under Consideration | 🤔 Under Consideration | 🤔 Under Consideration |
+| Azure | 🤔 Under Consideration | 🤔 Under Consideration | 🤔 Under Consideration |
+
+
+*Exoscale snapshots are automatically deleted when volumes are deleted, preventing reliable backup/restore. Use the `snapshot-volume` action instead.
 
 
 
@@ -92,6 +96,33 @@ Creates snapshots of volumes and then destroys them.
 - `snapshot-id`: The ID of the created snapshot (AWS)
 - `snapshot-ids`: Comma-separated IDs of created snapshots (Exoscale, if multiple volumes)
 
+> **⚠️ Important for Exoscale:** This action is **disabled for Exoscale** because Exoscale automatically deletes snapshots when their source volumes are deleted, making backup/restore impossible. Use the `snapshot-volume` action instead to create snapshots without deletion.
+
+### 📸 `snapshot-volume` (Exoscale Only)
+
+Creates snapshots of Exoscale block storage volumes without deleting them.
+
+**Features:**
+- Creates snapshots with matching labels for identification
+- Preserves volumes after snapshot creation
+- Waits for snapshots to complete before finishing
+- Exoscale-specific action for safe snapshot management
+
+**Usage:**
+
+```yaml
+- name: Snapshot Volume
+  uses: sinan-ozel/cloud-volume-actions/snapshot-volume@v0.1.0
+  with:
+    volume-name: 'my-data-volume'
+    exoscale-zone: 'ch-gva-2'
+    exoscale-api-key: ${{ secrets.EXOSCALE_API_KEY }}
+    exoscale-api-secret: ${{ secrets.EXOSCALE_API_SECRET }}
+```
+
+**Outputs:**
+- `snapshot-ids`: Comma-separated IDs of created snapshots
+
 ## Inputs
 
 ### Common Inputs
@@ -167,9 +198,14 @@ jobs:
    - Ensures volume is in available state
 
 2. **Snapshot & Destroy:**
-   - Creates snapshot(s) of all matching volumes
-   - Deletes volumes after successful snapshot
-   - Preserves snapshots for future restoration
+   - **AWS:** Creates snapshot(s) of all matching volumes, then deletes volumes after successful snapshot
+   - **Exoscale:** Not supported - snapshots are deleted with volumes. Use `snapshot-volume` action instead
+   - Preserves snapshots for future restoration (AWS only)
+
+3. **Snapshot Only (Exoscale):**
+   - Creates snapshot(s) without deleting volumes
+   - Safe way to backup Exoscale volumes
+   - Volumes remain active after snapshot creation
 
 ### Snapshot Management
 
