@@ -1,0 +1,72 @@
+name: 'Snapshot Cloud Volume'
+description: 'Creates snapshots of Exoscale block storage volumes'
+author: 'Sinan Ozel'
+
+branding:
+  icon: 'save'
+  color: 'blue'
+
+inputs:
+  volume-name:
+    description: 'Name/label for the volume'
+    required: true
+
+  exoscale-zone:
+    description: 'Exoscale zone'
+    required: false
+    default: 'ch-gva-2'
+
+  exoscale-api-key:
+    description: 'Exoscale API key'
+    required: true
+
+  exoscale-api-secret:
+    description: 'Exoscale API secret'
+    required: true
+
+outputs:
+  snapshot-ids:
+    description: 'Comma-separated IDs of created snapshots'
+    value: ${{ steps.snapshot.outputs.snapshot-ids }}
+
+runs:
+  using: composite
+  steps:
+    - name: Validate inputs
+      shell: bash
+      run: |
+        if [[ -z "${{ inputs.exoscale-api-key }}" ]] || [[ -z "${{ inputs.exoscale-api-secret }}" ]]; then
+          echo "❌ Error: Exoscale credentials required"
+          exit 1
+        fi
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        pip install -r ${{ github.action_path }}/requirements/exoscale
+
+    - name: Create snapshots
+      id: snapshot
+      shell: bash
+      env:
+        VOLUME_NAME: ${{ inputs.volume-name }}
+        EXOSCALE_ZONE: ${{ inputs.exoscale-zone }}
+        EXOSCALE_API_KEY: ${{ inputs.exoscale-api-key }}
+        EXOSCALE_API_SECRET: ${{ inputs.exoscale-api-secret }}
+        PYTHONPATH: ${{ github.action_path }}
+      run: |
+        python ${{ github.action_path }}/scripts/exoscale/snapshot.py
+
+        if [ -f snapshot-output.txt ]; then
+          SNAPSHOT_IDS=$(cat snapshot-output.txt)
+          echo "snapshot-ids=${SNAPSHOT_IDS}" >> $GITHUB_OUTPUT
+          echo "✅ Snapshot IDs: ${SNAPSHOT_IDS}"
+        else
+          echo "❌ Error: snapshot-output.txt not found"
+          exit 1
+        fi

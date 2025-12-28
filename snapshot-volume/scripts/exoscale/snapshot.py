@@ -1,6 +1,6 @@
-"""Exoscale block storage volume teardown script.
+"""Exoscale block storage volume snapshot script.
 
-Creates snapshots of volumes and then deletes them.
+Creates snapshots of volumes (without destroying them).
 Reads configuration from environment variables.
 """
 
@@ -53,7 +53,9 @@ def main():
                 snapshots = snapshots_response.get("block-storage-snapshots", [])
                 for s in snapshots:
                     if s.get("id") == snapshot_id:
-                        print(f"Snapshot {snapshot_id} found in list with state: {s.get('state')}")
+                        print(
+                            f"Snapshot {snapshot_id} found in list with state: {s.get('state')}"
+                        )
                         return True
                 return False
             except Exception as e:
@@ -82,48 +84,25 @@ def main():
     wait_until(check=check_snapshots_ready, kwargs={}, cond=lambda result: result)
     print("All snapshots completed")
 
-    # Verify all snapshots exist before deletion
-    print("\nVerifying all snapshots before deletion:")
+    # Verify all snapshots exist
+    print("\nVerifying snapshots:")
     snapshots_response = exo.list_block_storage_snapshots()
     all_snapshots = snapshots_response.get("block-storage-snapshots", [])
     matching_snapshots = [s for s in all_snapshots if s.get("labels") == LABELS]
     print(f"Found {len(matching_snapshots)} snapshots with matching labels:")
     for s in matching_snapshots:
-        print(f"  - Snapshot ID: {s.get('id')}, State: {s.get('state')}, Name: {s.get('name')}")
+        print(
+            f"  - Snapshot ID: {s.get('id')}, State: {s.get('state')}, Name: {s.get('name')}"
+        )
 
     if len(matching_snapshots) == 0:
-        raise RuntimeError("No snapshots found before deletion! Aborting volume deletion.")
-
-    # Delete all matching volumes
-    for volume_id in volume_ids:
-        print(f"Deleting volume: {volume_id}")
-        exo.delete_block_storage_volume(id=volume_id)
-
-    # Wait until all volumes are deleted
-    def check_volumes_deleted():
-        volumes_response = exo.list_block_storage_volumes()
-        volumes = volumes_response.get("block-storage-volumes", [])
-        remaining = [v for v in volumes if v.get("labels") == LABELS]
-        return len(remaining) == 0
-
-    wait_until(check=check_volumes_deleted, kwargs={}, cond=lambda result: result)
-    print("All volumes deleted successfully")
-
-    # Verify snapshots still exist after deletion
-    print("\nVerifying snapshots after volume deletion:")
-    snapshots_response = exo.list_block_storage_snapshots()
-    all_snapshots = snapshots_response.get("block-storage-snapshots", [])
-    matching_snapshots = [s for s in all_snapshots if s.get("labels") == LABELS]
-    print(f"Found {len(matching_snapshots)} snapshots after deletion:")
-    for s in matching_snapshots:
-        print(f"  - Snapshot ID: {s.get('id')}, State: {s.get('state')}, Name: {s.get('name')}")
-
-    if len(matching_snapshots) == 0:
-        raise RuntimeError("Snapshots disappeared after volume deletion!")
+        raise RuntimeError("No snapshots found!")
 
     # Write snapshot IDs to file for output
     with open("snapshot-output.txt", "w") as f:
         f.write(",".join(snapshot_ids))
+
+    print(f"\n✅ Successfully created {len(snapshot_ids)} snapshot(s)")
 
 
 if __name__ == "__main__":
