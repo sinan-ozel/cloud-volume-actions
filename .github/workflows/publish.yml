@@ -235,7 +235,7 @@ jobs:
   publish-release:
     runs-on: ubuntu-latest
     needs: [detect-version-change, test-actions, integration-test]
-    if: false  # DISABLED: Set to true to enable publishing if: needs.detect-version-change.outputs.version-changed == 'true'
+    if: needs.detect-version-change.outputs.version-changed == 'true'  # TO DISABLE: Set to if: false. To enable publishing set to if: needs.detect-version-change.outputs.version-changed == 'true'
 
     permissions:
       contents: write
